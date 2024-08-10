@@ -108,7 +108,7 @@ CREATE TABLE Preferenza_Episodi (
 
 -- Creazione della tabella Abbonamento
 CREATE TABLE Abbonamento (
-    ID SERIAL PRIMARY KEY,
+    ID PRIMARY KEY,
     Data_sottoscrizione DATE,
     Data_scadenza DATE,
     Prezzo NUMERIC(10, 2),
@@ -144,7 +144,7 @@ CREATE TABLE Metodo_di_pagamento (
 
 -- Creazione della tabella Retribuzione
 CREATE TABLE Retribuzione (
-    ID_transazione SERIAL PRIMARY KEY,
+    ID_transazione PRIMARY KEY,
     data_esecuzione DATE,
     importo NUMERIC(10, 2),
     IBAN_beneficiario VARCHAR(27) REFERENCES Artista(IBAN)
