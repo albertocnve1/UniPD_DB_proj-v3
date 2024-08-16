@@ -1,104 +1,111 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
-#include "libpq-fe.h"
-#define PG_HOST "localhost"
-#define PG_USER "albertocanavese"
-#define PG_DB "soundify"
-#define PG_PASS "" 
-#define PG_PORT "5432"
+#include <libpq-fe.h>
+
+#define PG_HOST    "localhost"
+#define PG_USER    "postgres"
+#define PG_DB      "soundify"
+#define PG_PASS    ""
+#define PG_PORT    5432
 
 void exit_nicely(PGconn *conn) {
     PQfinish(conn);
     exit(1);
 }
 
-PGconn* connect() {
-    char conninfo[256];
-    sprintf(conninfo, "host=%s user=%s dbname=%s password=%s port=%s",
-        PG_HOST, PG_USER, PG_DB, PG_PASS, PG_PORT);
-
-    PGconn* conn = PQconnectdb(conninfo);
-
-    if (PQstatus(conn) != CONNECTION_OK) {
-        fprintf(stderr, "Connection to database failed: %s\n", PQerrorMessage(conn));
-        exit_nicely(conn);
-    }
-
-    return conn;
-}
-
-PGresult* execute(PGconn* conn, const char* query) {
-    PGresult* res = PQexec(conn, query);
-    if (PQresultStatus(res) != PGRES_TUPLES_OK) {
-        fprintf(stderr, "Query failed: %s\n", PQerrorMessage(conn));
+void checkCommand(PGresult *res, PGconn *conn) {  // Rimosso 'const'
+    if (PQresultStatus(res) != PGRES_COMMAND_OK) {
+        printf("Comando fallito %s\n", PQerrorMessage(conn));
         PQclear(res);
-        exit_nicely(conn);
+        exit_nicely(conn);  // Passa conn non-const
     }
-
-    return res;
 }
 
-void printLine(int campi, int* maxChar) {
-    for (int j = 0; j < campi; ++j) {
+void checkResults(PGresult *res, PGconn *conn) {  // Rimosso 'const'
+    if (PQresultStatus(res) != PGRES_TUPLES_OK) {
+        printf("Risultati inconsistenti %s\n", PQerrorMessage(conn));
+        PQclear(res);
+        exit_nicely(conn);  // Passa conn non-const
+    }
+}
+
+void printLine(int nFields, int* maxWidths) {
+    for (int i = 0; i < nFields; i++) {
         printf("+");
-        for (int k = 0; k < maxChar[j] + 2; ++k)
+        for (int j = 0; j < maxWidths[i] + 2; j++) {
             printf("-");
+        }
     }
     printf("+\n");
 }
 
-void printQuery(PGresult* res) {
-    const int tuple = PQntuples(res), campi = PQnfields(res);
-    char v[tuple + 1][campi][256];
+void execute_and_print_query(PGconn *conn, const char *query) {
+    PGresult *res;
+    int nFields, nTuples;
+    int i, j;
 
-    for (int i = 0; i < campi; ++i) {
-        strcpy(v[0][i], PQfname(res, i));
-    }
-    for (int i = 0; i < tuple; ++i) {
-        for (int j = 0; j < campi; ++j) {
-            strcpy(v[i + 1][j], PQgetvalue(res, i, j));
+    // Esegui la query
+    res = PQexec(conn, query);
+    checkResults(res, conn);
+
+    // Ottieni il numero di campi nella query
+    nFields = PQnfields(res);
+    nTuples = PQntuples(res);
+
+    // Calcola la larghezza massima per ciascun campo
+    int maxWidths[nFields];
+    for (i = 0; i < nFields; i++) {
+        maxWidths[i] = strlen(PQfname(res, i));
+        for (j = 0; j < nTuples; j++) {
+            int fieldWidth = strlen(PQgetvalue(res, j, i));
+            if (fieldWidth > maxWidths[i]) {
+                maxWidths[i] = fieldWidth;
+            }
         }
     }
 
-    int maxChar[campi];
-    for (int i = 0; i < campi; ++i) {
-        maxChar[i] = 0;
-    }
+    // Stampa linea superiore
+    printLine(nFields, maxWidths);
 
-    for (int i = 0; i < campi; ++i) {
-        for (int j = 0; j < tuple + 1; ++j) {
-            int size = strlen(v[j][i]);
-            maxChar[i] = size > maxChar[i] ? size : maxChar[i];
+    // Stampa i nomi delle colonne
+    for (i = 0; i < nFields; i++) {
+        printf("| %-*s ", maxWidths[i], PQfname(res, i));
+    }
+    printf("|\n");
+
+    // Stampa linea di separazione
+    printLine(nFields, maxWidths);
+
+    // Stampa i valori delle righe
+    for (i = 0; i < nTuples; i++) {
+        for (j = 0; j < nFields; j++) {
+            printf("| %-*s ", maxWidths[j], PQgetvalue(res, i, j));
         }
+        printf("|\n");
     }
 
-    printLine(campi, maxChar);
-    for (int j = 0; j < campi; ++j) {
-        printf("| %s", v[0][j]);
-        for (int k = 0; k < maxChar[j] - (int)strlen(v[0][j]) + 1; ++k)
-            printf(" ");
-        if (j == campi - 1)
-            printf("|");
-    }
-    printf("\n");
-    printLine(campi, maxChar);
+    // Stampa linea inferiore
+    printLine(nFields, maxWidths);
 
-    for (int i = 1; i < tuple + 1; ++i) {
-        for (int j = 0; j < campi; ++j) {
-            printf("| %s", v[i][j]);
-            for (int k = 0; k < maxChar[j] - (int)strlen(v[i][j]) + 1; ++k)
-                printf(" ");
-            if (j == campi - 1)
-                printf("|");
-        }
-        printf("\n");
-    }
-    printLine(campi, maxChar);
+    // Pulisci i risultati
+    PQclear(res);
 }
 
 int main() {
-    PGconn* conn = connect();
+    char conninfo[500];
+    sprintf(conninfo, "postgresql://%s:%s@%s:%d/%s", PG_USER, PG_PASS, PG_HOST, PG_PORT, PG_DB);
+
+    // Eseguo la connessione al database
+    PGconn *conn;
+    conn = PQconnectdb(conninfo);
+
+    // Verifico lo stato di connessione
+    if (PQstatus(conn) != CONNECTION_OK) {
+        printf("Errore di connessione: %s\n", PQerrorMessage(conn));
+        PQfinish(conn);
+        exit(1);
+    }
 
     const char* query[4] = {
         // Query 1: Episodi con il maggior numero di riproduzioni per ogni podcast
@@ -150,7 +157,7 @@ int main() {
                 printf("Inserisci il codice fiscale dell'artista: ");
                 scanf("%s", codiceFiscale);
                 sprintf(queryTemp, query[1], codiceFiscale);
-                printQuery(execute(conn, queryTemp));
+                execute_and_print_query(conn, queryTemp);
                 break;
             }
             case 3: {
@@ -158,7 +165,7 @@ int main() {
                 printf("Inserisci il numero minimo di riproduzioni: ");
                 scanf("%d", &riproduzioni_minime);
                 sprintf(queryTemp, query[2], riproduzioni_minime);
-                printQuery(execute(conn, queryTemp));
+                execute_and_print_query(conn, queryTemp);
                 break;
             }
             case 4: {
@@ -168,11 +175,11 @@ int main() {
                 printf("Inserisci la data di fine (YYYY-MM-DD): ");
                 scanf("%s", end_date);
                 sprintf(queryTemp, query[3], start_date, end_date);
-                printQuery(execute(conn, queryTemp));
+                execute_and_print_query(conn, queryTemp);
                 break;
             }
             default:
-                printQuery(execute(conn, query[q - 1]));
+                execute_and_print_query(conn, query[q - 1]);
                 break;
         }
     }
